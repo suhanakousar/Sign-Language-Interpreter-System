@@ -1,0 +1,110 @@
+version: "3.9"
+
+services:
+  # ─── Frontend ───
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../docker/frontend.Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_WS_URL=ws://localhost:3001
+      - NEXT_PUBLIC_API_URL=http://localhost:3001/api
+    depends_on:
+      - node-api
+    restart: unless-stopped
+
+  # ─── Node.js API Gateway ───
+  node-api:
+    build:
+      context: ../backend/node-api
+      dockerfile: ../../docker/node-api.Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - SPEECH_TO_TEXT_URL=http://speech-to-text:8001
+      - NLP_PROCESSOR_URL=http://nlp-processor:8002
+      - TEXT_TO_SIGN_URL=http://text-to-sign:8003
+      - MONGODB_URI=mongodb://mongodb:27017/sign-language-interpreter
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      - speech-to-text
+      - nlp-processor
+      - text-to-sign
+      - redis
+    restart: unless-stopped
+
+  # ─── Speech-to-Text Service ───
+  speech-to-text:
+    build:
+      context: ../backend/python-services/speech_to_text
+      dockerfile: ../../../docker/speech-to-text.Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - WHISPER_MODEL=${WHISPER_MODEL:-base}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
+    volumes:
+      - whisper-cache:/root/.cache
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    restart: unless-stopped
+
+  # ─── NLP Processor Service ───
+  nlp-processor:
+    build:
+      context: ../backend/python-services/nlp_processor
+      dockerfile: ../../../docker/nlp-processor.Dockerfile
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+
+  # ─── Text-to-Sign Service ───
+  text-to-sign:
+    build:
+      context: ../backend/python-services/text_to_sign
+      dockerfile: ../../../docker/text-to-sign.Dockerfile
+    ports:
+      - "8003:8003"
+    restart: unless-stopped
+
+  # ─── Redis Cache ───
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  # ─── MongoDB ───
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    restart: unless-stopped
+
+  # ─── Nginx Reverse Proxy ───
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - node-api
+    restart: unless-stopped
+
+volumes:
+  whisper-cache:
+  redis-data:
+  mongodb-data:
