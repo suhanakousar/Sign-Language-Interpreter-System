@@ -40,7 +40,8 @@ export class PipelineService {
       const formData = new FormData();
       formData.append(
         "audio",
-        new Blob([audioBuffer], { type: "audio/webm" })
+        new Blob([audioBuffer], { type: "audio/webm" }),
+        "audio.webm"
       );
       formData.append("language", language);
 
@@ -48,7 +49,6 @@ export class PipelineService {
         `${config.speechToTextUrl}/transcribe`,
         formData,
         {
-          headers: { "Content-Type": "multipart/form-data" },
           timeout: 10000,
         }
       );
