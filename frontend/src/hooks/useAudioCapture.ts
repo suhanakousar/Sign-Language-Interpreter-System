@@ -2,70 +2,127 @@
 
 import { useCallback, useRef } from "react";
 import { useAppStore } from "@/lib/store";
-import { AUDIO_CONFIG } from "@/lib/constants";
+import { processTextToGestures } from "@/lib/textToSign";
 
 interface UseAudioCaptureOptions {
-  onAudioChunk: (data: ArrayBuffer) => void;
+  onAudioChunk?: (data: ArrayBuffer) => void;
 }
 
-export function useAudioCapture({ onAudioChunk }: UseAudioCaptureOptions) {
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const { isRecording, setRecording } = useAppStore();
+// Browser-native Speech Recognition (Chrome, Edge, Safari)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const getSpeechRecognition = (): (new () => any) | null => {
+  if (typeof window === "undefined") return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const w = window as any;
+  return w.SpeechRecognition || w.webkitSpeechRecognition || null;
+};
+
+export function useAudioCapture({ onAudioChunk }: UseAudioCaptureOptions = {}) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+  const isRecording = useAppStore((s) => s.isRecording);
 
   const startRecording = useCallback(async () => {
+    const SpeechRecognitionCtor = getSpeechRecognition();
+    if (!SpeechRecognitionCtor) {
+      console.error(
+        "Speech Recognition not supported. Use Chrome or Edge for speech input."
+      );
+      return;
+    }
+
+    const { setRecording, addTranscript, enqueueGestures, setCurrentPartial } =
+      useAppStore.getState();
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: AUDIO_CONFIG.sampleRate,
-          channelCount: AUDIO_CONFIG.channelCount,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      const recognition = new SpeechRecognitionCtor();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang =
+        useAppStore.getState().settings.language === "hi" ? "hi-IN" : "en-US";
 
-      streamRef.current = stream;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      recognition.onresult = (event: any) => {
+        let interimTranscript = "";
 
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported(AUDIO_CONFIG.mimeType)
-          ? AUDIO_CONFIG.mimeType
-          : "audio/webm",
-      });
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const result = event.results[i];
+          const text: string = result[0].transcript;
 
-      mediaRecorder.ondataavailable = async (event) => {
-        if (event.data.size > 0) {
-          const buffer = await event.data.arrayBuffer();
-          onAudioChunk(buffer);
+          if (result.isFinal) {
+            // Process final speech result into gestures
+            const { gestures, processedText } = processTextToGestures(text);
+
+            addTranscript({
+              id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              text: text.trim(),
+              processed_text: processedText || text.trim(),
+              timestamp: Date.now(),
+              is_final: true,
+            });
+
+            if (gestures.length > 0) {
+              enqueueGestures(gestures);
+            }
+
+            setCurrentPartial("");
+          } else {
+            interimTranscript += text;
+          }
+        }
+
+        if (interimTranscript) {
+          setCurrentPartial(interimTranscript);
         }
       };
 
-      mediaRecorder.start(AUDIO_CONFIG.chunkDuration);
-      mediaRecorderRef.current = mediaRecorder;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      recognition.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        // Don't stop for transient "no-speech" errors
+        if (event.error !== "no-speech") {
+          setRecording(false);
+          recognitionRef.current = null;
+        }
+      };
+
+      recognition.onend = () => {
+        // Auto-restart if user hasn't stopped recording
+        if (useAppStore.getState().isRecording && recognitionRef.current) {
+          try {
+            recognitionRef.current.start();
+          } catch {
+            setRecording(false);
+            recognitionRef.current = null;
+          }
+        }
+      };
+
+      recognition.start();
+      recognitionRef.current = recognition;
       setRecording(true);
     } catch (error) {
-      console.error("Failed to start audio capture:", error);
-      setRecording(false);
+      console.error("Failed to start speech recognition:", error);
+      useAppStore.getState().setRecording(false);
     }
-  }, [onAudioChunk, setRecording]);
+  }, []);
 
   const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current?.state !== "inactive") {
-      mediaRecorderRef.current?.stop();
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
     }
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    mediaRecorderRef.current = null;
-    streamRef.current = null;
-    setRecording(false);
-  }, [setRecording]);
+    useAppStore.getState().setRecording(false);
+    useAppStore.getState().setCurrentPartial("");
+  }, []);
 
   const toggleRecording = useCallback(() => {
-    if (isRecording) {
+    if (useAppStore.getState().isRecording) {
       stopRecording();
     } else {
       startRecording();
     }
-  }, [isRecording, startRecording, stopRecording]);
+  }, [startRecording, stopRecording]);
 
   return { isRecording, startRecording, stopRecording, toggleRecording };
 }

@@ -8,8 +8,8 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { GestureQueue } from "@/components/GestureQueue";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Notifications } from "@/components/Notifications";
+import { TextInput } from "@/components/TextInput";
 import { AvatarSkeleton } from "@/components/SkeletonLoader";
-import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAudioCapture } from "@/hooks/useAudioCapture";
 import { useAppStore } from "@/lib/store";
 import { Keyboard, Monitor } from "lucide-react";
@@ -24,18 +24,8 @@ const Avatar3D = dynamic(
 );
 
 export default function Home() {
-  const { connect, disconnect, sendAudioChunk } = useWebSocket();
-  const { toggleRecording } = useAudioCapture({
-    onAudioChunk: sendAudioChunk,
-  });
-  const connectionStatus = useAppStore((s) => s.connectionStatus);
+  const { toggleRecording } = useAudioCapture();
   const isRecording = useAppStore((s) => s.isRecording);
-
-  // Auto-connect on mount
-  useEffect(() => {
-    connect();
-    return () => disconnect();
-  }, [connect, disconnect]);
 
   // Keyboard shortcut: Space to toggle recording
   const handleKeyDown = useCallback(
@@ -44,12 +34,12 @@ export default function Home() {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
-      if (e.code === "Space" && connectionStatus === "connected") {
+      if (e.code === "Space") {
         e.preventDefault();
         toggleRecording();
       }
     },
-    [connectionStatus, toggleRecording]
+    [toggleRecording]
   );
 
   useEffect(() => {
@@ -156,24 +146,12 @@ export default function Home() {
             >
               <MicrophoneButton onToggle={toggleRecording} />
 
-              <div
-                className="flex items-center gap-2 text-xs text-slate-400"
-                role="status"
-                aria-live="polite"
-              >
-                <span
-                  className={`status-dot status-dot--${connectionStatus}`}
-                  aria-hidden="true"
-                />
-                <span>
-                  {connectionStatus === "connected"
-                    ? "WebSocket connected"
-                    : connectionStatus === "connecting"
-                      ? "Connecting to server..."
-                      : connectionStatus === "error"
-                        ? "Connection failed"
-                        : "Disconnected"}
-                </span>
+              {/* Text input for typing text to convert */}
+              <div className="w-full border-t border-slate-200/50 pt-4">
+                <p className="text-xs text-slate-400 mb-2 text-center">
+                  Or type text to convert to sign language
+                </p>
+                <TextInput />
               </div>
 
               {/* Screen reader only: announce recording state */}
